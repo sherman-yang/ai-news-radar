@@ -12,6 +12,7 @@ const state = {
   mode: "ai",
   waytoagiMode: "today",
   waytoagiData: null,
+  sourceStatus: null,
   generatedAt: null,
 };
 
@@ -22,6 +23,7 @@ const newsListEl = document.getElementById("newsList");
 const updatedAtEl = document.getElementById("updatedAt");
 const searchInputEl = document.getElementById("searchInput");
 const resultCountEl = document.getElementById("resultCount");
+const listTitleEl = document.getElementById("listTitle");
 const itemTpl = document.getElementById("itemTpl");
 const modeAiBtnEl = document.getElementById("modeAiBtn");
 const modeAllBtnEl = document.getElementById("modeAllBtn");
@@ -29,6 +31,8 @@ const modeHintEl = document.getElementById("modeHint");
 const allDedupeWrapEl = document.getElementById("allDedupeWrap");
 const allDedupeToggleEl = document.getElementById("allDedupeToggle");
 const allDedupeLabelEl = document.getElementById("allDedupeLabel");
+const advancedSummaryEl = document.getElementById("advancedSummary");
+const sourceHealthEl = document.getElementById("sourceHealth");
 
 const waytoagiUpdatedAtEl = document.getElementById("waytoagiUpdatedAt");
 const waytoagiMetaEl = document.getElementById("waytoagiMeta");
@@ -64,12 +68,10 @@ function fmtDate(iso) {
 
 function setStats(payload) {
   const cards = [
-    ["24h AI", fmtNumber(payload.total_items)],
-    ["24h 全量", fmtNumber(payload.total_items_raw || payload.total_items)],
-    ["全量去重后", fmtNumber(payload.total_items_all_mode || payload.total_items_raw || payload.total_items)],
+    ["AI 信号", fmtNumber(payload.total_items)],
     ["站点数", fmtNumber(payload.site_count)],
     ["来源分组", fmtNumber(payload.source_count)],
-    ["归档总量", fmtNumber(payload.archive_total || 0)]
+    ["归档", fmtNumber(payload.archive_total || 0)]
   ];
 
   statsEl.innerHTML = "";
@@ -79,6 +81,22 @@ function setStats(payload) {
     node.innerHTML = `<div class="k">${k}</div><div class="v">${v}</div>`;
     statsEl.appendChild(node);
   });
+}
+
+function renderAdvancedSummary() {
+  if (!advancedSummaryEl) return;
+  const status = state.sourceStatus;
+  const allCount = state.allDedup
+    ? (state.totalAllMode || state.itemsAll.length)
+    : (state.totalRaw || state.itemsAllRaw.length);
+  if (!status) {
+    advancedSummaryEl.textContent = `全量 ${fmtNumber(allCount)} 条`;
+    return;
+  }
+  const sites = Array.isArray(status.sites) ? status.sites : [];
+  const totalSites = sites.length;
+  const okSites = Number(status.successful_sites || 0);
+  advancedSummaryEl.textContent = `${fmtNumber(okSites)}/${fmtNumber(totalSites)} 源可用 · 全量 ${fmtNumber(allCount)} 条`;
 }
 
 function computeSiteStats(items) {
@@ -144,13 +162,16 @@ function renderModeSwitch() {
   if (allDedupeToggleEl) allDedupeToggleEl.checked = state.allDedup;
   if (allDedupeLabelEl) allDedupeLabelEl.textContent = state.allDedup ? "去重开" : "去重关";
   if (state.mode === "ai") {
-    modeHintEl.textContent = `当前视图：AI强相关（${fmtNumber(state.totalAi)} 条）`;
+    modeHintEl.textContent = `AI强相关 · ${fmtNumber(state.totalAi)} 条`;
+    if (listTitleEl) listTitleEl.textContent = "AI 信号流";
   } else {
     const allCount = state.allDedup
       ? (state.totalAllMode || state.itemsAll.length)
       : (state.totalRaw || state.itemsAllRaw.length);
-    modeHintEl.textContent = `当前视图：全量（${state.allDedup ? "去重开" : "去重关"}，${fmtNumber(allCount)} 条）`;
+    modeHintEl.textContent = `全量 · ${state.allDedup ? "去重开" : "去重关"} · ${fmtNumber(allCount)} 条`;
+    if (listTitleEl) listTitleEl.textContent = "全量更新";
   }
+  renderAdvancedSummary();
 }
 
 function effectiveAllItems() {
@@ -199,14 +220,16 @@ function renderItemNode(item) {
 function buildSourceGroupNode(source, items) {
   const section = document.createElement("section");
   section.className = "source-group";
-  section.innerHTML = `
-    <header class="source-group-head">
-      <h3>${source}</h3>
-      <span>${fmtNumber(items.length)} 条</span>
-    </header>
-    <div class="source-group-list"></div>
-  `;
-  const listEl = section.querySelector(".source-group-list");
+  const header = document.createElement("header");
+  header.className = "source-group-head";
+  const title = document.createElement("h3");
+  title.textContent = source;
+  const count = document.createElement("span");
+  count.textContent = `${fmtNumber(items.length)} 条`;
+  const listEl = document.createElement("div");
+  listEl.className = "source-group-list";
+  header.append(title, count);
+  section.append(header, listEl);
   items.forEach((item) => listEl.appendChild(renderItemNode(item)));
   return section;
 }
@@ -257,15 +280,17 @@ function renderGroupedBySiteAndSource(items) {
   sites.forEach(([, site]) => {
     const siteSection = document.createElement("section");
     siteSection.className = "site-group";
-    siteSection.innerHTML = `
-      <header class="site-group-head">
-        <h3>${site.siteName}</h3>
-        <span>${fmtNumber(site.items.length)} 条</span>
-      </header>
-      <div class="site-group-list"></div>
-    `;
+    const header = document.createElement("header");
+    header.className = "site-group-head";
+    const title = document.createElement("h3");
+    title.textContent = site.siteName;
+    const count = document.createElement("span");
+    count.textContent = `${fmtNumber(site.items.length)} 条`;
+    const siteListEl = document.createElement("div");
+    siteListEl.className = "site-group-list";
+    header.append(title, count);
+    siteSection.append(header, siteListEl);
 
-    const siteListEl = siteSection.querySelector(".site-group-list");
     const sourceGroups = groupBySource(site.items);
     sourceGroups.forEach(([source, groupItems]) => {
       siteListEl.appendChild(buildSourceGroupNode(source, groupItems));
@@ -313,15 +338,30 @@ function renderWaytoagi(waytoagi) {
   if (waytoagi7dBtnEl) waytoagi7dBtnEl.classList.toggle("active", state.waytoagiMode === "7d");
   waytoagiUpdatedAtEl.textContent = `更新时间：${fmtTime(waytoagi.generated_at)}`;
 
-  waytoagiMetaEl.innerHTML = `
-    <a href="${waytoagi.root_url || "#"}" target="_blank" rel="noopener noreferrer">主页面</a>
-    <span>·</span>
-    <a href="${waytoagi.history_url || "#"}" target="_blank" rel="noopener noreferrer">历史更新页</a>
-    <span>·</span>
-    <span>当天(${latestDate || "--"})：${fmtNumber(waytoagi.count_today || updatesToday.length)} 条</span>
-    <span>·</span>
-    <span>近 7 日：${fmtNumber(waytoagi.count_7d || updates7d.length)} 条</span>
-  `;
+  waytoagiMetaEl.innerHTML = "";
+  const rootLink = document.createElement("a");
+  rootLink.href = waytoagi.root_url || "#";
+  rootLink.target = "_blank";
+  rootLink.rel = "noopener noreferrer";
+  rootLink.textContent = "主页面";
+  const historyLink = document.createElement("a");
+  historyLink.href = waytoagi.history_url || "#";
+  historyLink.target = "_blank";
+  historyLink.rel = "noopener noreferrer";
+  historyLink.textContent = "历史更新页";
+  const todayCount = document.createElement("span");
+  todayCount.textContent = `当天(${latestDate || "--"})：${fmtNumber(waytoagi.count_today || updatesToday.length)} 条`;
+  const weekCount = document.createElement("span");
+  weekCount.textContent = `近 7 日：${fmtNumber(waytoagi.count_7d || updates7d.length)} 条`;
+  [rootLink, "·", historyLink, "·", todayCount, "·", weekCount].forEach((part) => {
+    if (typeof part === "string") {
+      const sep = document.createElement("span");
+      sep.textContent = part;
+      waytoagiMetaEl.appendChild(sep);
+    } else {
+      waytoagiMetaEl.appendChild(part);
+    }
+  });
 
   waytoagiListEl.innerHTML = "";
   if (waytoagi.has_error) {
@@ -349,9 +389,100 @@ function renderWaytoagi(waytoagi) {
     row.href = u.url || "#";
     row.target = "_blank";
     row.rel = "noopener noreferrer";
-    row.innerHTML = `<span class="d">${fmtDate(u.date)}</span><span class="t">${u.title}</span>`;
+    const dateEl = document.createElement("span");
+    dateEl.className = "d";
+    dateEl.textContent = fmtDate(u.date);
+    const titleEl = document.createElement("span");
+    titleEl.className = "t";
+    titleEl.textContent = u.title;
+    row.append(dateEl, titleEl);
     waytoagiListEl.appendChild(row);
   });
+}
+
+function renderMetric(label, value, tone = "") {
+  const node = document.createElement("div");
+  node.className = `health-metric ${tone}`.trim();
+  const labelEl = document.createElement("span");
+  labelEl.className = "health-label";
+  labelEl.textContent = label;
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+  node.append(labelEl, valueEl);
+  return node;
+}
+
+function renderIssueList(title, items) {
+  const wrap = document.createElement("div");
+  wrap.className = "health-issue";
+  const titleEl = document.createElement("div");
+  titleEl.className = "health-issue-title";
+  titleEl.textContent = title;
+  const list = document.createElement("ul");
+  items.slice(0, 6).forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = typeof item === "string" ? item : JSON.stringify(item);
+    list.appendChild(li);
+  });
+  if (items.length > 6) {
+    const li = document.createElement("li");
+    li.textContent = `另有 ${fmtNumber(items.length - 6)} 项`;
+    list.appendChild(li);
+  }
+  wrap.append(titleEl, list);
+  return wrap;
+}
+
+function renderSourceHealth(errorMessage = "") {
+  if (!sourceHealthEl) return;
+  sourceHealthEl.innerHTML = "";
+
+  const status = state.sourceStatus;
+  if (!status) {
+    const empty = document.createElement("div");
+    empty.className = "health-empty";
+    empty.textContent = errorMessage || "源状态未生成";
+    sourceHealthEl.appendChild(empty);
+    renderAdvancedSummary();
+    return;
+  }
+
+  const sites = Array.isArray(status.sites) ? status.sites : [];
+  const failedSites = Array.isArray(status.failed_sites) ? status.failed_sites : [];
+  const zeroSites = Array.isArray(status.zero_item_sites) ? status.zero_item_sites : [];
+  const rss = status.rss_opml || {};
+  const failedFeeds = Array.isArray(rss.failed_feeds) ? rss.failed_feeds : [];
+  const skippedFeeds = Array.isArray(rss.skipped_feeds) ? rss.skipped_feeds : [];
+  const replacedFeeds = Array.isArray(rss.replaced_feeds) ? rss.replaced_feeds : [];
+
+  const metricGrid = document.createElement("div");
+  metricGrid.className = "health-grid";
+  metricGrid.append(
+    renderMetric("内置源", `${fmtNumber(status.successful_sites || 0)}/${fmtNumber(sites.length)}`, failedSites.length ? "warn" : "ok"),
+    renderMetric("RSS", rss.enabled ? `${fmtNumber(rss.ok_feeds || 0)}/${fmtNumber(rss.effective_feed_total || 0)}` : "未启用"),
+    renderMetric("失败源", fmtNumber(failedSites.length + failedFeeds.length), failedSites.length || failedFeeds.length ? "bad" : "ok"),
+    renderMetric("替换/跳过", `${fmtNumber(replacedFeeds.length)}/${fmtNumber(skippedFeeds.length)}`)
+  );
+  sourceHealthEl.appendChild(metricGrid);
+
+  const issues = document.createElement("div");
+  issues.className = "health-issues";
+  if (failedSites.length) issues.appendChild(renderIssueList("失败站点", failedSites));
+  if (zeroSites.length) issues.appendChild(renderIssueList("零结果站点", zeroSites));
+  if (failedFeeds.length) issues.appendChild(renderIssueList("失败 RSS", failedFeeds));
+  if (skippedFeeds.length) {
+    issues.appendChild(renderIssueList("跳过 RSS", skippedFeeds.map((item) => `${item.feed_url} · ${item.reason || "skipped"}`)));
+  }
+
+  if (issues.childElementCount) {
+    sourceHealthEl.appendChild(issues);
+  } else {
+    const ok = document.createElement("div");
+    ok.className = "health-ok";
+    ok.textContent = "源状态正常";
+    sourceHealthEl.appendChild(ok);
+  }
+  renderAdvancedSummary();
 }
 
 async function loadNewsData() {
@@ -366,8 +497,18 @@ async function loadWaytoagiData() {
   return res.json();
 }
 
+async function loadSourceStatusData() {
+  const res = await fetch(`./data/source-status.json?t=${Date.now()}`);
+  if (!res.ok) throw new Error(`加载 source-status.json 失败: ${res.status}`);
+  return res.json();
+}
+
 async function init() {
-  const [newsResult, waytoagiResult] = await Promise.allSettled([loadNewsData(), loadWaytoagiData()]);
+  const [newsResult, waytoagiResult, statusResult] = await Promise.allSettled([
+    loadNewsData(),
+    loadWaytoagiData(),
+    loadSourceStatusData(),
+  ]);
 
   if (newsResult.status === "fulfilled") {
     const payload = newsResult.value;
@@ -388,6 +529,13 @@ async function init() {
   } else {
     updatedAtEl.textContent = "新闻数据加载失败";
     newsListEl.innerHTML = `<div class="empty">${newsResult.reason.message}</div>`;
+  }
+
+  if (statusResult.status === "fulfilled") {
+    state.sourceStatus = statusResult.value;
+    renderSourceHealth();
+  } else {
+    renderSourceHealth(statusResult.reason.message);
   }
 
   if (waytoagiResult.status === "fulfilled") {

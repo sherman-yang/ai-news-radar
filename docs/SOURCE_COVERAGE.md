@@ -1,0 +1,86 @@
+# Source Coverage Plan
+
+This project should help ordinary AI enthusiasts scan high-signal updates
+without forcing them to follow noisy timelines or manage many source choices.
+
+## Product Model
+
+Use a two-layer model:
+
+1. **Signal layer**: the default web UI. It should show curated AI/tech updates,
+   WaytoAGI changes, search, site filtering, and a simple AI-focused / all toggle.
+2. **Advanced layer**: maintainer and power-user workflows. It includes OPML,
+   source health data, GitHub Actions secrets, and custom fetchers.
+
+Do not expose every source-management decision in the first screen. Too many
+choices make the tool harder for new users to understand.
+
+## Supported Source Types
+
+| Source type | Current support | Recommended path | Notes |
+| --- | --- | --- | --- |
+| Official RSS / Atom | Supported through OPML | Add to `feeds/follow.opml` locally, or `FOLLOW_OPML_B64` in GitHub Actions | Best default for personal customization. |
+| OPML collections | Supported | Export from RSS reader, copy from `feeds/follow.example.opml`, keep private file out of git | Good for cross-device and multi-agent workflows. |
+| Public JSON APIs | Supported by custom Python fetchers | Add a `fetch_*` function in `scripts/update_news.py` and register it in the task list | Use only stable APIs with timestamps. |
+| Public static pages | Supported by custom Python fetchers | Parse with `requests` + BeautifulSoup and normalize titles/URLs/times | Avoid fragile selectors when possible. |
+| GitHub releases/blogs | Usually supported through Atom/RSS | Prefer GitHub Atom feeds or official blog RSS | Useful for model/platform/tool release tracking. |
+| Newsletters | Partially supported | Prefer public archive RSS or stable archive pages | Do not scrape private inboxes. |
+| X / Twitter | Not recommended as a default | Use curated lists, topic feeds, or manual sources only when high-signal | Following a person often imports too much noise. |
+| WeChat public accounts | Not recommended as a default | Use stable third-party RSS only if the maintainer accepts breakage risk | Login/copyright/bridge stability can be poor. |
+| Telegram / Bilibili / Zhihu / podcasts | Skipped by default when feeds are unreliable | Add only as opt-in OPML entries | These can be noisy or bridge-dependent. |
+
+## Source Selection Rules
+
+Add a source only when it passes most of these checks:
+
+- Publishes AI, model, developer tool, or tech industry updates with low noise.
+- Has a stable URL, feed, API, or page structure.
+- Provides usable timestamps or enough ordering information.
+- Does not require private cookies, login sessions, browser automation, or secrets.
+- Can be fetched politely by GitHub Actions without heavy rate limits.
+- Adds coverage not already represented by stronger sources.
+
+## Personal Source Workflow
+
+For a private custom setup:
+
+1. Copy `feeds/follow.example.opml` to `feeds/follow.opml`.
+2. Add official RSS/Atom feeds to `feeds/follow.opml`.
+3. Run:
+
+   ```bash
+   python scripts/update_news.py --output-dir data --window-hours 24 --rss-opml feeds/follow.opml
+   ```
+
+4. Check `data/source-status.json` for `failed_feeds`, `zero_item_feeds`,
+   `skipped_feeds`, and `replaced_feeds`.
+5. Keep `feeds/follow.opml` private. For GitHub Actions, store its base64
+   content in the `FOLLOW_OPML_B64` secret.
+
+## Adding A Built-In Source
+
+Use this only for sources that should benefit every public visitor:
+
+1. Add a `fetch_<source_name>(session, now)` function in `scripts/update_news.py`.
+2. Return `RawItem` objects with `site_id`, `site_name`, `source`, `title`, `url`,
+   `published_at`, and `meta`.
+3. Register the fetcher in the built-in task list.
+4. Normalize URLs and dates using existing helpers.
+5. Update this document if the source changes coverage.
+6. Run the fastest relevant checks:
+
+   ```bash
+   python -m py_compile scripts/update_news.py
+   pytest -q
+   ```
+
+## Deployment
+
+The public deployment should remain GitHub Pages + GitHub Actions:
+
+- GitHub Actions updates `data/*.json`.
+- GitHub Pages serves `index.html` and `assets/*`.
+- Private OPML input belongs in `FOLLOW_OPML_B64`, not in the repository.
+
+This keeps the public version easy to fork while still letting each maintainer
+bring their own private source list.

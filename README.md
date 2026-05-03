@@ -42,6 +42,16 @@
 - 告警数据输出：
   - `failed_feeds` / `zero_item_feeds` / `skipped_feeds` / `replaced_feeds`
 
+### 2.1 自定义信息源与 Agent 工作流
+
+这个项目采用双层设计：
+
+- 默认层：给普通 AI 爱好者直接使用的 `AI强相关` 信号流。
+- 进阶层：给维护者使用的 OPML、自定义源、源健康状态与 GitHub Actions 部署配置。
+
+添加自己的信息源时，优先使用 `feeds/follow.opml` 或 GitHub Secret `FOLLOW_OPML_B64`，不要把私有订阅文件提交到仓库。
+详细覆盖策略见 `docs/SOURCE_COVERAGE.md`。给 Codex / Claude Code 使用的项目 Skill 在 `skills/ai-news-radar/SKILL.md`。
+
 ### 3. 数据输出
 
 - `data/latest-24h.json`
@@ -53,7 +63,7 @@
 ### 4. 快速开始
 
 ```bash
-cd /Users/carl/Downloads/10_项目代码/01_内容自动化与发布/ai-news-radar
+cd ai-news-radar
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -133,6 +143,16 @@ You only need to run one command, or let GitHub Actions run it on schedule.
   - Auto-skip unsupported source types (to save crawl time)
 - Alert-friendly status output (`failed_feeds`, `zero_item_feeds`, `skipped_feeds`, `replaced_feeds`)
 
+### 2.1 Custom sources and agent workflow
+
+This project uses a two-layer design:
+
+- Default layer: a curated `AI-focused` signal feed for ordinary AI enthusiasts.
+- Advanced layer: OPML, custom sources, source health, and GitHub Actions deployment settings for maintainers.
+
+For custom sources, prefer `feeds/follow.opml` locally or GitHub secret `FOLLOW_OPML_B64` in Actions. Do not commit private subscription files.
+See `docs/SOURCE_COVERAGE.md` for source strategy. The Codex / Claude Code project skill lives at `skills/ai-news-radar/SKILL.md`.
+
 ### 3. Output files
 
 - `data/latest-24h.json`
@@ -144,7 +164,7 @@ You only need to run one command, or let GitHub Actions run it on schedule.
 ### 4. Quick start
 
 ```bash
-cd /Users/carl/Downloads/10_项目代码/01_内容自动化与发布/ai-news-radar
+cd ai-news-radar
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
