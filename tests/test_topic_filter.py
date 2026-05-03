@@ -1,11 +1,15 @@
 import unittest
+from unittest.mock import patch
 
 from scripts.update_news import (
+    build_agentmail_digest_payload,
     build_latest_payloads,
     dedupe_items_by_title_url,
+    fetch_agentmail_digest,
     is_ai_related_record,
     is_hubtoday_generic_anchor_title,
     is_hubtoday_placeholder_title,
+    maybe_fetch_agentmail_digest,
     maybe_fix_mojibake,
     normalize_source_for_display,
     parse_ai_breakfast_items,
@@ -277,6 +281,128 @@ class TopicFilterTests(unittest.TestCase):
         self.assertNotIn("items_all_raw", slim)
         self.assertEqual(all_payload["items_all"][0]["title"], "All post")
         self.assertEqual(all_payload["items_all_raw"][0]["title"], "Raw post")
+
+    def test_agentmail_digest_strips_body_addresses_and_secrets(self):
+        payload = build_agentmail_digest_payload(
+            [
+                {
+                    "message_id": "msg_private_1",
+                    "timestamp": "2026-05-03T00:00:00Z",
+                    "from": "Private Sender <newsletter@example.com>",
+                    "to": ["reader@personal.example"],
+                    "subject": "OpenAI update for reader@personal.example",
+                    "preview": "New model notes. token=supersecret123 and contact reader@personal.example",
+                    "text": "FULL PRIVATE BODY SHOULD NOT SHIP",
+                    "html": "<p>FULL PRIVATE HTML SHOULD NOT SHIP</p>",
+                    "extracted_text": "EXTRACTED BODY SHOULD NOT SHIP",
+                    "labels": ["newsletter", "private-client"],
+                    "attachments": [{"filename": "deck.pdf"}],
+                }
+            ],
+            generated_at="2026-05-03T01:00:00Z",
+            window_hours=24,
+        )
+        item = payload["items"][0]
+        dumped = str(payload)
+        self.assertEqual(payload["privacy"], "metadata_only_no_body")
+        self.assertEqual(item["sender_domain"], "example.com")
+        self.assertIn("[redacted-email]", item["subject"])
+        self.assertIn("[redacted-secret]", item["preview"])
+        self.assertTrue(item["has_attachments"])
+        self.assertNotIn("newsletter@example.com", dumped)
+        self.assertNotIn("reader@personal.example", dumped)
+        self.assertNotIn("FULL PRIVATE BODY", dumped)
+        self.assertNotIn("EXTRACTED BODY", dumped)
+        self.assertNotIn("private-client", dumped)
+
+    def test_fetch_agentmail_digest_uses_list_messages_endpoint_only(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "messages": [
+                        {
+                            "message_id": "msg_2",
+                            "timestamp": "2026-05-03T00:00:00Z",
+                            "from": "AI Newsletter <news@example.com>",
+                            "subject": "Claude ships a new feature",
+                            "preview": "Short public-ish preview",
+                        }
+                    ]
+                }
+
+        class FakeSession:
+            def __init__(self):
+                self.calls = []
+
+            def get(self, url, **kwargs):
+                self.calls.append((url, kwargs))
+                return FakeResponse()
+
+        session = FakeSession()
+        payload = fetch_agentmail_digest(
+            session,
+            api_key="test-key",
+            inbox_id="inbox_123",
+            generated_at="2026-05-03T01:00:00Z",
+            after="2026-05-02T01:00:00Z",
+            limit=10,
+            base_url="https://api.agentmail.to",
+        )
+        self.assertEqual(len(session.calls), 1)
+        url, kwargs = session.calls[0]
+        self.assertEqual(url, "https://api.agentmail.to/v0/inboxes/inbox_123/messages")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+        self.assertEqual(kwargs["params"]["after"], "2026-05-02T01:00:00Z")
+        self.assertNotIn("raw", url)
+        self.assertEqual(payload["items"][0]["sender_domain"], "example.com")
+
+    def test_agentmail_default_off_does_not_request_network(self):
+        class NoNetworkSession:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, *args, **kwargs):
+                self.calls += 1
+                raise AssertionError("AgentMail should stay offline unless explicitly enabled")
+
+        session = NoNetworkSession()
+        with patch.dict("os.environ", {}, clear=True):
+            payload, status = maybe_fetch_agentmail_digest(
+                session,
+                generated_at="2026-05-03T01:00:00Z",
+                after="2026-05-02T01:00:00Z",
+                window_hours=24,
+            )
+        self.assertIsNone(payload)
+        self.assertFalse(status["enabled"])
+        self.assertIsNone(status["ok"])
+        self.assertEqual(session.calls, 0)
+
+    def test_agentmail_enabled_without_credentials_does_not_request_network(self):
+        class NoNetworkSession:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, *args, **kwargs):
+                self.calls += 1
+                raise AssertionError("AgentMail should not fetch without full credentials")
+
+        session = NoNetworkSession()
+        with patch.dict("os.environ", {"EMAIL_DIGEST_ENABLED": "1"}, clear=True):
+            payload, status = maybe_fetch_agentmail_digest(
+                session,
+                generated_at="2026-05-03T01:00:00Z",
+                after="2026-05-02T01:00:00Z",
+                window_hours=24,
+            )
+        self.assertIsNone(payload)
+        self.assertTrue(status["enabled"])
+        self.assertFalse(status["ok"])
+        self.assertEqual(status["error"], "missing_agentmail_credentials")
+        self.assertEqual(session.calls, 0)
 
 
 if __name__ == "__main__":

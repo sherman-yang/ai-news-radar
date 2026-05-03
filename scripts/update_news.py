@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from email.utils import parseaddr
 import hashlib
 import json
+import os
 import random
 import re
 import time
@@ -110,6 +112,9 @@ OFFICIAL_AI_FEEDS: tuple[dict[str, str], ...] = (
 OFFICIAL_AI_MAX_AGE_DAYS = 45
 AIBREAKFAST_JINA_URL = "https://r.jina.ai/https://aibreakfast.beehiiv.com/"
 FOLLOW_BUILDERS_FEED_BASE = "https://raw.githubusercontent.com/zarazhangrui/follow-builders/main"
+AGENTMAIL_API_BASE_DEFAULT = "https://api.agentmail.to"
+AGENTMAIL_DIGEST_FILE = "email-digest.json"
+AGENTMAIL_DEFAULT_LIMIT = 50
 
 
 @dataclass
@@ -2256,6 +2261,154 @@ def sanitize_public_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return sanitize_public_value(payload)
 
 
+def compact_public_snippet(text: str, max_chars: int = 240) -> str:
+    """Return a short redacted snippet suitable for public/static JSON."""
+    snippet = re.sub(r"\s+", " ", str(text or "")).strip()
+    snippet = redact_public_text(snippet)
+    if len(snippet) <= max_chars:
+        return snippet
+    return snippet[: max_chars - 1].rstrip() + "…"
+
+
+def sender_domain_from_address(raw_sender: str) -> str | None:
+    """Extract only the sender domain; never expose the raw email address."""
+    _, email_addr = parseaddr(str(raw_sender or ""))
+    if "@" not in email_addr:
+        return None
+    domain = email_addr.rsplit("@", 1)[-1].strip().lower().strip(">")
+    return domain or None
+
+
+def safe_agentmail_item(message: dict[str, Any]) -> dict[str, Any]:
+    """Convert an AgentMail MessageItem into a metadata-only public digest item."""
+    message_id = str(message.get("message_id") or "")
+    stable_id = hashlib.sha1(message_id.encode("utf-8")).hexdigest()[:12] if message_id else "unknown"
+    domain = sender_domain_from_address(str(message.get("from") or ""))
+    attachments = message.get("attachments") or []
+    return {
+        "id": f"agentmail:{stable_id}",
+        "source_type": "email_newsletter",
+        "source": f"AgentMail · {domain}" if domain else "AgentMail",
+        "sender_domain": domain,
+        "subject": compact_public_snippet(str(message.get("subject") or ""), max_chars=180),
+        "preview": compact_public_snippet(str(message.get("preview") or ""), max_chars=240),
+        "received_at": message.get("timestamp") or message.get("created_at"),
+        "has_attachments": bool(attachments),
+        "attachment_count": len(attachments) if isinstance(attachments, list) else 0,
+    }
+
+
+def build_agentmail_digest_payload(
+    messages: list[dict[str, Any]],
+    generated_at: str,
+    window_hours: int,
+) -> dict[str, Any]:
+    """Build a privacy-preserving digest from AgentMail list-message results."""
+    items = [safe_agentmail_item(msg) for msg in messages]
+    return sanitize_public_payload(
+        {
+            "generated_at": generated_at,
+            "source": "agentmail",
+            "enabled": True,
+            "window_hours": window_hours,
+            "privacy": "metadata_only_no_body",
+            "total_messages": len(items),
+            "items": items,
+        }
+    )
+
+
+def fetch_agentmail_digest(
+    session: requests.Session,
+    api_key: str,
+    inbox_id: str,
+    generated_at: str,
+    after: str,
+    limit: int = AGENTMAIL_DEFAULT_LIMIT,
+    base_url: str = AGENTMAIL_API_BASE_DEFAULT,
+    window_hours: int = 24,
+) -> dict[str, Any]:
+    """Fetch AgentMail MessageItem metadata; deliberately does not request bodies or raw .eml."""
+    base = (base_url or AGENTMAIL_API_BASE_DEFAULT).rstrip("/")
+    url = f"{base}/v0/inboxes/{inbox_id}/messages"
+    response = session.get(
+        url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        params={
+            "limit": max(1, min(int(limit or AGENTMAIL_DEFAULT_LIMIT), 100)),
+            "after": after,
+            "ascending": "false",
+            "include_spam": "false",
+            "include_trash": "false",
+            "include_blocked": "false",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    messages = payload.get("messages") if isinstance(payload, dict) else []
+    if not isinstance(messages, list):
+        messages = []
+    return build_agentmail_digest_payload(messages, generated_at=generated_at, window_hours=window_hours)
+
+
+def env_flag(name: str) -> bool:
+    return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.environ.get(name) or default).strip() or default)
+    except ValueError:
+        return default
+
+
+def maybe_fetch_agentmail_digest(
+    session: requests.Session,
+    generated_at: str,
+    after: str,
+    window_hours: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Fetch AgentMail only when explicitly enabled and fully configured."""
+    status: dict[str, Any] = {
+        "enabled": env_flag("EMAIL_DIGEST_ENABLED"),
+        "ok": None,
+        "item_count": 0,
+        "privacy": "metadata_only_no_body",
+        "published_by_default": False,
+    }
+    if not status["enabled"]:
+        return None, status
+
+    agentmail_api_key = str(os.environ.get("AGENTMAIL_API_KEY") or "").strip()
+    agentmail_inbox_id = str(os.environ.get("AGENTMAIL_INBOX_ID") or "").strip()
+    agentmail_base_url = str(os.environ.get("AGENTMAIL_API_BASE_URL") or AGENTMAIL_API_BASE_DEFAULT).strip()
+    agentmail_limit = env_int("AGENTMAIL_LIMIT", AGENTMAIL_DEFAULT_LIMIT)
+    if not (agentmail_api_key and agentmail_inbox_id):
+        status["ok"] = False
+        status["error"] = "missing_agentmail_credentials"
+        return None, status
+
+    try:
+        payload = fetch_agentmail_digest(
+            session,
+            api_key=agentmail_api_key,
+            inbox_id=agentmail_inbox_id,
+            generated_at=generated_at,
+            after=after,
+            limit=agentmail_limit,
+            base_url=agentmail_base_url,
+            window_hours=window_hours,
+        )
+        status["ok"] = True
+        status["item_count"] = int(payload.get("total_messages") or 0)
+        return payload, status
+    except Exception as exc:
+        status["ok"] = False
+        status["error"] = type(exc).__name__
+        return None, status
+
+
 def has_mojibake_noise(text: str) -> bool:
     if not text:
         return False
@@ -2487,12 +2640,19 @@ def main() -> int:
     status_path = output_dir / "source-status.json"
     waytoagi_path = output_dir / "waytoagi-7d.json"
     title_cache_path = output_dir / "title-zh-cache.json"
+    email_digest_path = output_dir / AGENTMAIL_DIGEST_FILE
 
     archive = load_archive(archive_path)
 
     session = create_session()
     raw_items, statuses = collect_all(session, now)
     rss_feed_statuses: list[dict[str, Any]] = []
+    email_digest_payload, agentmail_status = maybe_fetch_agentmail_digest(
+        session,
+        generated_at=iso(now),
+        after=iso(now - timedelta(hours=args.window_hours)),
+        window_hours=args.window_hours,
+    )
 
     if args.rss_opml:
         opml_path = Path(args.rss_opml).expanduser()
@@ -2704,6 +2864,7 @@ def main() -> int:
             ],
             "feeds": rss_feed_statuses,
         },
+        "agentmail": agentmail_status,
     }
 
     try:
@@ -2731,6 +2892,11 @@ def main() -> int:
         encoding="utf-8",
     )
     status_path.write_text(json.dumps(sanitize_public_payload(status_payload), ensure_ascii=False, indent=2), encoding="utf-8")
+    if email_digest_payload is not None:
+        email_digest_path.write_text(
+            json.dumps(sanitize_public_payload(email_digest_payload), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     waytoagi_path.write_text(json.dumps(sanitize_public_payload(waytoagi_payload), ensure_ascii=False, indent=2), encoding="utf-8")
     title_cache_path.write_text(json.dumps(sanitize_public_payload(title_cache), ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -2738,6 +2904,8 @@ def main() -> int:
     print(f"Wrote: {latest_all_path} ({len(latest_items_all_dedup)} all-mode items)")
     print(f"Wrote: {archive_path} ({len(archive)} items)")
     print(f"Wrote: {status_path}")
+    if email_digest_payload is not None:
+        print(f"Wrote: {email_digest_path} ({email_digest_payload.get('total_messages', 0)} email items)")
     print(f"Wrote: {waytoagi_path} ({waytoagi_payload.get('count_7d', 0)} items)")
     print(f"Wrote: {title_cache_path} ({len(title_cache)} entries)")
 

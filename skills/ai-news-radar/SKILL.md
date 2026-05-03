@@ -9,6 +9,8 @@ description: "Use when working on the LearnPrompt AI News Radar / AI Signal Boar
 
 When this skill triggers inside the repo, read these files first:
 
+- `skills/ai-news-radar/README.md` for the public-facing 懂王.skill positioning,
+  source-intake prompt, and install-after-first-message guidance.
 - `README.md` for project usage and current commands.
 - `docs/GPT_HANDOFF.md` before release-readiness checks or handing the project
   to another agent.
@@ -44,12 +46,16 @@ For detailed prompts and decision criteria, read `references/v2-method.md`.
 Maintain a two-layer product:
 
 - **Default layer**: a simple curated Signal view for ordinary AI enthusiasts.
-- **Advanced layer**: custom OPML, source health, GitHub Actions, and maintainer controls.
+- **Advanced layer**: custom OPML, source health, GitHub Actions, AgentMail email intelligence, and maintainer controls.
 
 Avoid adding many reader-facing choices. Prefer better defaults, source quality,
 and clearer status output.
 
 The v2 packaging goal is a forkable public site plus a reusable agent Skill.
+The public-facing Skill name is **懂王.skill**: it should feel social and
+memorable, but stay honest about scope. Do not imply it knows everything; frame
+it as the skill that understands how to turn noisy sources into a readable AI
+daily radar.
 Ordinary users should be able to browse the hosted page. Maintainers should be
 able to add their own sources with OPML, public generated feeds, or secret-backed
 optional adapters without changing the public default.
@@ -66,8 +72,24 @@ optional adapters without changing the public default.
 - Treat X API, email, WeChat, private newsletters, and cookies as optional
   advanced integrations. Store credentials only in environment variables or
   GitHub Secrets.
+- Treat AgentMail as a private advanced source, not a public default source.
+  Never commit `AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX_ID`, inbox addresses,
+  full email bodies, raw emails, or private newsletter contents.
+- Keep AgentMail disabled unless `EMAIL_DIGEST_ENABLED=1` and both required
+  credentials are present. Only call the list-messages endpoint; do not call
+  `/raw` or read `text`/`html` bodies.
+- Do not publish `data/email-digest.json` to public Pages by default. Only allow
+  publication when the maintainer explicitly sets `EMAIL_DIGEST_PUBLISH=1` and
+  understands the site/repo privacy implications.
 
 ## Add Personal Sources
+
+When the user has installed or forked the project but does not know how to start,
+ask them for a source list first. A good kickoff prompt is:
+
+```text
+请使用懂王Skill，先问我要信息源清单，然后帮我判断每个源该用RSS、OPML、公开feed、静态页面、Jina兜底、AgentMail邮箱还是跳过。目标是部署一个不需要服务器、能用GitHub Actions自动更新的AI日报网站。不要把任何API Key、cookies、token、真实OPML、邮箱正文或私有邮件内容写入仓库。
+```
 
 Use OPML for private customization:
 
@@ -78,6 +100,10 @@ python scripts/update_news.py --output-dir data --window-hours 24 --rss-opml fee
 
 For GitHub Actions deployment, base64 encode `feeds/follow.opml` and save it as
 the repository secret `FOLLOW_OPML_B64`. Do not commit the private OPML file.
+For AgentMail, use `EMAIL_DIGEST_ENABLED=1`, `AGENTMAIL_API_KEY`, and
+`AGENTMAIL_INBOX_ID` only in environment variables or GitHub Secrets. Keep
+`EMAIL_DIGEST_PUBLISH` unset unless the maintainer explicitly wants a private
+Pages/repo to publish the metadata-only email digest.
 
 ## Evaluate A New Source
 
@@ -88,8 +114,9 @@ When a user gives a source URL, first classify it:
 - GitHub project with generated feeds: inspect README, workflows, output files,
   and raw JSON/RSS URLs; prefer consuming its public feed files.
 - Official changelog or static page: add a focused fetcher only if stable.
-- Newsletter: prefer public archive RSS or archive pages; never require private
-  mailbox access for the public default.
+- Newsletter: prefer public archive RSS or archive pages. Use AgentMail only for
+  private newsletter/product-update inboxes; keep it disabled by default and do
+  not expose full bodies, raw emails, inbox ids, or private mailbox addresses.
 - X/Twitter: prefer curated central feeds that already use official X API; direct
   X API should be optional and secret-backed.
 
@@ -128,7 +155,19 @@ Run the fastest relevant checks:
 ```bash
 python -m py_compile scripts/update_news.py
 pytest -q
+node --check assets/app.js
+git diff --check
 ```
+
+For AgentMail changes, also verify default-off safety:
+
+```bash
+pytest -q tests/test_topic_filter.py -k agentmail
+```
+
+Confirm the checks cover: disabled AgentMail makes no network request, enabled
+but missing credentials makes no network request, the adapter only uses the
+list-messages endpoint, and email body/raw fields are not emitted.
 
 When the Skill itself changes, validate the Skill package too:
 
