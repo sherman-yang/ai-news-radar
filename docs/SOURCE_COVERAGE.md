@@ -15,6 +15,21 @@ Use a two-layer model:
 Do not expose every source-management decision in the first screen. Too many
 choices make the tool harder for new users to understand.
 
+## V2 Coverage Claim
+
+The project can be packaged as a Skill because it covers the common public paths
+for AI news collection:
+
+- official RSS/Atom/JSON and changelog pages
+- OPML collections for personal source lists
+- public GitHub-generated feeds such as curated X/blog/newsletter projects
+- public newsletter archives and static pages
+- optional secret-backed adapters for sources that need user-owned credentials
+
+It does not promise reliable default coverage for private inboxes, cookies,
+WeChat accounts, or raw social timelines. Those belong in the advanced layer or
+private forks because they need credentials, bridges, or ongoing maintenance.
+
 ## Supported Source Types
 
 | Source type | Current support | Recommended path | Notes |

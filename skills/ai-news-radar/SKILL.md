@@ -1,6 +1,6 @@
 ---
 name: ai-news-radar
-description: Use when working on the LearnPrompt AI News Radar / AI Signal Board repo, adding or evaluating high-signal AI news sources from RSS, OPML, GitHub-generated feeds, public JSON, official changelogs, newsletters, X/Twitter bridge feeds, or static pages; configuring private feeds and GitHub Actions secrets; deploying the GitHub Pages site; or helping Codex/Claude agents maintain, fork, or package the project safely.
+description: "Use when working on the LearnPrompt AI News Radar / AI Signal Board repo: evaluating AI news sources, RSS/OPML/GitHub feed/X/newsletter coverage, changing source strategy or UI defaults, configuring Actions secrets, deploying Pages, or packaging/forking the project as a Codex/Claude skill."
 ---
 
 # AI News Radar
@@ -15,6 +15,26 @@ When this skill triggers inside the repo, read these files first:
 - `assets/app.js`, `assets/styles.css`, and `index.html` before changing the UI.
 - `references/source-intake.md` when the user provides a new site, GitHub repo,
   RSS feed, newsletter, X source, or asks whether a source can be ingested.
+- `references/v2-method.md` when the user asks for product optimization, source
+  coverage strategy, Skill packaging, or "v2" direction.
+
+## V2 Workflow
+
+Use this order for non-trivial product or source-strategy work:
+
+1. **Context pass**: read the current docs, source status, recent commits, and
+   the smallest relevant code surface before proposing changes.
+2. **Product diagnostic**: identify the user, current workaround, signal-density
+   problem, narrowest useful default, and what must stay in the advanced layer.
+3. **Coverage pass**: classify each requested source as official feed, OPML,
+   public GitHub-generated feed, public archive, static page, X bridge, optional
+   API adapter, or private inbox/bridge.
+4. **Alternatives pass**: when the choice is not obvious, present 2-3 approaches:
+   minimal viable, durable architecture, and optional creative/packaged variant.
+5. **Implementation pass**: make small diffs, reuse existing fetcher/UI patterns,
+   add tests for behavior changes, and run the fastest relevant validation.
+
+For detailed prompts and decision criteria, read `references/v2-method.md`.
 
 ## Product Direction
 
@@ -26,6 +46,11 @@ Maintain a two-layer product:
 Avoid adding many reader-facing choices. Prefer better defaults, source quality,
 and clearer status output.
 
+The v2 packaging goal is a forkable public site plus a reusable agent Skill.
+Ordinary users should be able to browse the hosted page. Maintainers should be
+able to add their own sources with OPML, public generated feeds, or secret-backed
+optional adapters without changing the public default.
+
 ## Safety Rules
 
 - Never commit private `feeds/follow.opml`.
@@ -35,6 +60,9 @@ and clearer status output.
 - Avoid account-bound social timelines as defaults.
 - Prefer reading public generated feeds over reimplementing another project's
   API or scraping pipeline.
+- Treat X API, email, WeChat, private newsletters, and cookies as optional
+  advanced integrations. Store credentials only in environment variables or
+  GitHub Secrets.
 
 ## Add Personal Sources
 
@@ -97,6 +125,12 @@ Run the fastest relevant checks:
 ```bash
 python -m py_compile scripts/update_news.py
 pytest -q
+```
+
+When the Skill itself changes, validate the Skill package too:
+
+```bash
+python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" skills/ai-news-radar
 ```
 
 For an end-to-end local run:

@@ -2,6 +2,19 @@
 
 Use this when evaluating a new information source for AI News Radar.
 
+## V2 Intake Questions
+
+Before implementation, answer these from the URL, repo, or user's message:
+
+- Who benefits: every public visitor, the maintainer, or one private fork?
+- What signal does it add that stronger existing sources do not already cover?
+- Does it publish stable timestamps and canonical URLs?
+- Can GitHub Actions fetch it without login, cookies, or browser automation?
+- Does it need secrets? If yes, can it skip cleanly when secrets are missing?
+- Will it flood the Signal view with off-topic items?
+
+Only ask the user when the answer changes default vs advanced routing.
+
 ## Decision Order
 
 1. Prefer official RSS/Atom/JSON feeds.
@@ -46,6 +59,11 @@ When a user gives a GitHub repo:
    - public GitHub Pages URL if provided
 6. Add a fetcher only after a source-only probe succeeds locally.
 
+Treat public generated feed files as the durable path. If the repo has a stable
+GitHub Action that commits `feed*.json` using its own API credentials, consume
+those public outputs. Do not clone its token flow into this repo unless the user
+explicitly asks for a self-hosted variant.
+
 ## X/Twitter Rules
 
 Do not depend on public RSSHub/XCancel/Nitter routes as a default source unless
@@ -65,6 +83,7 @@ For optional X API adapters:
 - Exclude retweets/replies by default.
 - Cap per-account items.
 - Record rate-limit or permission failures in `source-status.json`.
+- Skip cleanly when `X_BEARER_TOKEN` is missing; the public site must still run.
 
 ## Newsletter Rules
 
@@ -76,6 +95,8 @@ Prefer public archive feeds:
 
 Avoid private inbox ingestion as a default feature. Email requires OAuth, IMAP,
 App Passwords, forwarding, or third-party bridges and raises privacy concerns.
+If email support is requested, document it as an advanced private bridge and keep
+the public default independent from mailbox access.
 
 ## Built-In Fetcher Pattern
 
